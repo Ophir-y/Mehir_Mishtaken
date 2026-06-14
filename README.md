@@ -1,0 +1,38 @@
+# Mehir Matara — Scenario Comparison
+
+Single-page Hebrew RTL web app that compares three financial scenarios for buying
+a Mehir Matara (price-target / government discount-program) apartment in Israel:
+
+- **A** — Buy and live in the apartment after handover
+- **B** — Buy, rent it out after handover, continue living in a rental
+- **C** — Don't buy. Keep renting and invest the equity in S&P 500
+
+Construction-phase aware: staged contractor payments, gradual mortgage drawdown,
+and three drawdown modes (interest-only / full grace / partial Shpitzer).
+
+## Run
+
+```bash
+npm install
+npm run dev
+```
+
+## Test
+
+```bash
+npm test
+```
+
+## Tech
+
+- React 18 + TypeScript + Vite
+- Tailwind CSS + shadcn/ui-style primitives (Radix UI)
+- Recharts (with `ReferenceLine` at handover)
+- Vitest + Testing Library
+
+## Files of interest
+
+- `src/lib/simulation.ts` — pure math (no React)
+- `src/components/SliderInput.tsx` — reusable slider + number-input combo
+- `src/components/InputsPanel.tsx` — all inputs grouped in collapsible cards
+- `src/App.tsx` — layout
