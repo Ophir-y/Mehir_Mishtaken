@@ -1,0 +1,220 @@
+{
+  "projects": [
+    {
+      "id": "kiryat-gat-northwest",
+      "city": "קרית גת",
+      "projectName": "מתחם הצפון-מערב",
+      "developer": "אזורים",
+      "estimatedHandoverMonths": 30,
+      "sourceUrl": "https://www.dira.moch.gov.il",
+      "notes": "מתחם חדש בכניסה הצפונית, סמוך לרכבת",
+      "status": "open",
+      "registrationOpensAt": "2026-05-15T00:00:00Z",
+      "registrationClosesAt": "2026-06-28T23:59:59Z",
+      "apartments": [
+        {
+          "rooms": 3,
+          "lotteryPrice": 1250000,
+          "marketPrice": 1700000,
+          "unitsOffered": 24,
+          "applicants": 1850,
+          "estimatedRent": 4500
+        },
+        {
+          "rooms": 4,
+          "lotteryPrice": 1480000,
+          "marketPrice": 2050000,
+          "unitsOffered": 48,
+          "applicants": 3120,
+          "estimatedRent": 5400
+        },
+        {
+          "rooms": 5,
+          "lotteryPrice": 1780000,
+          "marketPrice": 2400000,
+          "unitsOffered": 20,
+          "applicants": 980,
+          "estimatedRent": 6200
+        }
+      ]
+    },
+    {
+      "id": "be-er-sheva-ramot",
+      "city": "באר שבע",
+      "projectName": "רמות ב'",
+      "developer": "שיכון ובינוי",
+      "estimatedHandoverMonths": 24,
+      "sourceUrl": "https://www.dira.moch.gov.il",
+      "status": "open",
+      "registrationOpensAt": "2026-05-20T00:00:00Z",
+      "registrationClosesAt": "2026-06-20T23:59:59Z",
+      "apartments": [
+        {
+          "rooms": 3,
+          "lotteryPrice": 1180000,
+          "marketPrice": 1500000,
+          "unitsOffered": 30,
+          "applicants": 1420,
+          "estimatedRent": 4100
+        },
+        {
+          "rooms": 4,
+          "lotteryPrice": 1390000,
+          "marketPrice": 1820000,
+          "unitsOffered": 60,
+          "applicants": 2680,
+          "estimatedRent": 5000
+        },
+        {
+          "rooms": 5,
+          "lotteryPrice": 1650000,
+          "marketPrice": 2150000,
+          "unitsOffered": 25,
+          "applicants": 800,
+          "estimatedRent": 5800
+        }
+      ]
+    },
+    {
+      "id": "petah-tikva-em-hamoshavot",
+      "city": "פתח תקווה",
+      "projectName": "אם המושבות החדשה",
+      "developer": "אפריקה ישראל",
+      "estimatedHandoverMonths": 36,
+      "sourceUrl": "https://www.dira.moch.gov.il",
+      "notes": "סמוך לתחנת רכבת קרית אריה",
+      "status": "open",
+      "registrationOpensAt": "2026-06-01T00:00:00Z",
+      "registrationClosesAt": "2026-07-05T23:59:59Z",
+      "apartments": [
+        {
+          "rooms": 3,
+          "lotteryPrice": 1850000,
+          "marketPrice": 2380000,
+          "unitsOffered": 18,
+          "applicants": 4100,
+          "estimatedRent": 6300
+        },
+        {
+          "rooms": 4,
+          "lotteryPrice": 2280000,
+          "marketPrice": 2950000,
+          "unitsOffered": 42,
+          "applicants": 7800,
+          "estimatedRent": 7500
+        },
+        {
+          "rooms": 5,
+          "lotteryPrice": 2680000,
+          "marketPrice": 3450000,
+          "unitsOffered": 16,
+          "applicants": 1900,
+          "estimatedRent": 8800
+        }
+      ]
+    },
+    {
+      "id": "rishon-letzion-nahalat-yehuda",
+      "city": "ראשון לציון",
+      "projectName": "נחלת יהודה דרום",
+      "developer": "צרפתי-שמעון",
+      "estimatedHandoverMonths": 30,
+      "sourceUrl": "https://www.dira.moch.gov.il",
+      "status": "open",
+      "registrationOpensAt": "2026-05-25T00:00:00Z",
+      "registrationClosesAt": "2026-06-16T23:59:59Z",
+      "apartments": [
+        {
+          "rooms": 3,
+          "lotteryPrice": 1980000,
+          "marketPrice": 2550000,
+          "unitsOffered": 14,
+          "applicants": 3450,
+          "estimatedRent": 6700
+        },
+        {
+          "rooms": 4,
+          "lotteryPrice": 2350000,
+          "marketPrice": 3100000,
+          "unitsOffered": 38,
+          "applicants": 6900,
+          "estimatedRent": 7900
+        },
+        {
+          "rooms": 5,
+          "lotteryPrice": 2780000,
+          "marketPrice": 3600000,
+          "unitsOffered": 12,
+          "applicants": 1450,
+          "estimatedRent": 9100
+        }
+      ]
+    },
+    {
+      "id": "haifa-neot-peretz",
+      "city": "חיפה",
+      "projectName": "נאות פרץ",
+      "developer": "צמח המרמן",
+      "estimatedHandoverMonths": 28,
+      "sourceUrl": "https://www.dira.moch.gov.il",
+      "status": "closed",
+      "registrationOpensAt": "2026-03-01T00:00:00Z",
+      "registrationClosesAt": "2026-04-15T23:59:59Z",
+      "apartments": [
+        {
+          "rooms": 3,
+          "lotteryPrice": 1320000,
+          "marketPrice": 1700000,
+          "unitsOffered": 22,
+          "applicants": 1180,
+          "estimatedRent": 4300
+        },
+        {
+          "rooms": 4,
+          "lotteryPrice": 1620000,
+          "marketPrice": 2100000,
+          "unitsOffered": 44,
+          "applicants": 2400,
+          "estimatedRent": 5300
+        },
+        {
+          "rooms": 5,
+          "lotteryPrice": 1920000,
+          "marketPrice": 2480000,
+          "unitsOffered": 18,
+          "applicants": 720,
+          "estimatedRent": 6100
+        }
+      ]
+    },
+    {
+      "id": "modiin-buchman-south",
+      "city": "מודיעין",
+      "projectName": "בוכמן דרום",
+      "developer": "שפיר",
+      "estimatedHandoverMonths": 32,
+      "sourceUrl": "https://www.dira.moch.gov.il",
+      "status": "upcoming",
+      "registrationOpensAt": "2026-07-15T00:00:00Z",
+      "registrationClosesAt": "2026-08-30T23:59:59Z",
+      "apartments": [
+        {
+          "rooms": 4,
+          "lotteryPrice": 2150000,
+          "marketPrice": 2780000,
+          "unitsOffered": 36,
+          "applicants": null,
+          "estimatedRent": 7200
+        },
+        {
+          "rooms": 5,
+          "lotteryPrice": 2520000,
+          "marketPrice": 3200000,
+          "unitsOffered": 18,
+          "applicants": null,
+          "estimatedRent": 8500
+        }
+      ]
+    }
+  ]
+}
