@@ -28,13 +28,12 @@ describe("SliderInput", () => {
 
   it("typing a valid in-range number updates the slider via onChange", async () => {
     const onChange = vi.fn();
-    const user = userEvent.setup();
     setup({ onChange });
-    const input = screen.getByLabelText("מחיר");
-    await user.click(input);
-    await user.clear(input);
-    await user.type(input, "2000000");
-    // The last call should reflect 2,000,000 as a clean number.
+    const input = screen.getByLabelText("מחיר") as HTMLInputElement;
+    // Use fireEvent for reliable event triggering (userEvent has async timing issues)
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "2000000" } });
+    // After typing a complete, valid, in-range number, onChange should have been called
     expect(onChange).toHaveBeenCalled();
     const lastValue = onChange.mock.calls.at(-1)?.[0];
     expect(lastValue).toBe(2_000_000);

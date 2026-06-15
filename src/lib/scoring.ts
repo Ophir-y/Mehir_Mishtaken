@@ -3,6 +3,7 @@ import { analyzeApartment, fastMetrics } from "@/lib/projectAnalysis";
 import type {
   Project,
   ProjectApartment,
+  ProjectPricePerSqm,
   ScoredApartment,
   ScoredProject,
 } from "@/lib/types";
@@ -34,19 +35,57 @@ function rescale(value: number, lowAnchor: number, highAnchor: number): number {
   return clamp100(((value - lowAnchor) / (highAnchor - lowAnchor)) * 100);
 }
 
+export interface ScoringOptions {
+  /**
+   * What-if discount fraction applied to the gov-set list price per m²
+   * (0..1). When provided, the apartment's lottery price is rescaled
+   * before scoring & simulation, so the user can stress-test different
+   * discount levels. Falls through to the per-lottery discount parsed
+   * from Notes when omitted.
+   */
+  discountOverride?: number;
+}
+
+/**
+ * Apply a what-if discount override to an apartment by rescaling its
+ * lottery price. The original `apt.lotteryPrice` already reflects the
+ * per-lottery discount parsed from the API; we back that out by the
+ * ratio (1 − override) / (1 − parsedDiscount). Market price is unchanged
+ * — it's the open-market reference, independent of the program discount.
+ */
+function applyDiscountOverride(
+  project: Project,
+  apt: ProjectApartment,
+  override: number | undefined,
+): ProjectApartment {
+  if (override === undefined || !project.pricePerSqm) return apt;
+  const parsed = project.pricePerSqm.discountPercent;
+  if (parsed >= 1 || override >= 1) return apt;
+  const ratio = (1 - override) / (1 - parsed);
+  if (!Number.isFinite(ratio) || ratio === 1) return apt;
+  return { ...apt, lotteryPrice: Math.round(apt.lotteryPrice * ratio) };
+}
+
 export function scoreApartment(
   project: Project,
   apt: ProjectApartment,
   userOverrides: Partial<SimulationInputs> = {},
+  scoringOptions: ScoringOptions = {},
 ): ScoredApartment {
+  const effectiveApt = applyDiscountOverride(
+    project,
+    apt,
+    scoringOptions.discountOverride,
+  );
+
   // Run the full simulation once — the source of truth for the real-return
   // metric. Other metrics are derived without re-running it.
-  const { inputs, result } = analyzeApartment(project, apt, userOverrides);
-  const { monthlyMortgage, rentalYieldGross } = fastMetrics(apt, inputs);
+  const { inputs, result } = analyzeApartment(project, effectiveApt, userOverrides);
+  const { monthlyMortgage, rentalYieldGross } = fastMetrics(effectiveApt, inputs);
 
-  const discountAbsolute = Math.max(0, apt.marketPrice - apt.lotteryPrice);
+  const discountAbsolute = Math.max(0, effectiveApt.marketPrice - effectiveApt.lotteryPrice);
   const discountFraction =
-    apt.marketPrice > 0 ? discountAbsolute / apt.marketPrice : 0;
+    effectiveApt.marketPrice > 0 ? discountAbsolute / effectiveApt.marketPrice : 0;
 
   // Real return: ((finalA - upfront cash) / upfront cash) / holdingYears.
   // upfrontCash = equity + one-time costs that the buyer actually paid in
@@ -93,7 +132,7 @@ export function scoreApartment(
 
   return {
     project,
-    apt,
+    apt: effectiveApt,
     score: clamp100(composite),
     breakdown: {
       discount: discountScore,
@@ -116,12 +155,37 @@ export function scoreApartment(
   };
 }
 
+/**
+ * Recompute the per-m² info using the user's discount override. When no
+ * override (or no parser pricePerSqm), returns the original. Market price
+ * is independent of the program discount — only the lottery side changes.
+ */
+function effectivePricePerSqmFor(
+  project: Project,
+  override: number | undefined,
+): ProjectPricePerSqm | undefined {
+  const base = project.pricePerSqm;
+  if (!base || override === undefined || override >= 1 || override < 0) {
+    return base;
+  }
+  const list = base.listPricePerSqm;
+  const market = base.marketPricePerSqm;
+  const newLottery = Math.round(list * (1 - override));
+  return {
+    ...base,
+    discountPercent: override,
+    lotteryPricePerSqm: newLottery,
+    savingsPercent: market > 0 ? (market - newLottery) / market : 0,
+  };
+}
+
 export function scoreProject(
   project: Project,
   userOverrides: Partial<SimulationInputs> = {},
+  scoringOptions: ScoringOptions = {},
 ): ScoredProject {
   const apartments = project.apartments.map((apt) =>
-    scoreApartment(project, apt, userOverrides),
+    scoreApartment(project, apt, userOverrides, scoringOptions),
   );
   // Project-level score = best apartment, since you register for the project
   // (or city) but get assigned a specific apartment by raffle.
@@ -134,14 +198,19 @@ export function scoreProject(
     best,
     apartments,
     score: best?.score ?? 0,
+    effectivePricePerSqm: effectivePricePerSqmFor(
+      project,
+      scoringOptions.discountOverride,
+    ),
   };
 }
 
 export function scoreAllProjects(
   projects: Project[],
   userOverrides: Partial<SimulationInputs> = {},
+  scoringOptions: ScoringOptions = {},
 ): ScoredProject[] {
   return projects
-    .map((p) => scoreProject(p, userOverrides))
+    .map((p) => scoreProject(p, userOverrides, scoringOptions))
     .sort((a, b) => b.score - a.score);
 }

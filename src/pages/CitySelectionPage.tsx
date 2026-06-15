@@ -62,12 +62,18 @@ export function CitySelectionPage() {
 
   const scored: ScoredProject[] = React.useMemo(
     () =>
-      scoreAllProjects(activeProjects, {
-        equityAsPercent: true,
-        equityPercent: prefs.equityPercent,
-        currentRent: prefs.currentRent,
-      }),
-    [activeProjects, prefs.equityPercent, prefs.currentRent],
+      scoreAllProjects(
+        activeProjects,
+        {
+          equityAsPercent: true,
+          equityPercent: prefs.equityPercent,
+          currentRent: prefs.currentRent,
+        },
+        {
+          discountOverride: prefs.discountOverride,
+        },
+      ),
+    [activeProjects, prefs.equityPercent, prefs.currentRent, prefs.discountOverride],
   );
 
   const allCities: string[] = React.useMemo(() => {
@@ -175,6 +181,7 @@ export function CitySelectionPage() {
       {openProjectScored ? (
         <ProjectDetailModal
           scored={openProjectScored}
+          prefs={prefs}
           onClose={() => setOpenProjectId(null)}
         />
       ) : null}

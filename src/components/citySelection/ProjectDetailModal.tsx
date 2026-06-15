@@ -14,6 +14,7 @@ import { ScoreBadge } from "@/components/citySelection/ScoreBadge";
 import { DeadlineChip } from "@/components/citySelection/DeadlineChip";
 import { formatPercent, formatShekels } from "@/lib/format";
 import { analyzeApartment } from "@/lib/projectAnalysis";
+import type { UserPreferences } from "@/lib/userPreferences";
 import type {
   ProjectApartment,
   ScoredApartment,
@@ -21,14 +22,15 @@ import type {
 } from "@/lib/types";
 
 /** Size baked into the parser; modal slider defaults here and scales around it. */
-const REPRESENTATIVE_SQM = 95;
+const REPRESENTATIVE_SQM = 110;
 
 interface ProjectDetailModalProps {
   scored: ScoredProject;
+  prefs: UserPreferences;
   onClose: () => void;
 }
 
-export function ProjectDetailModal({ scored, onClose }: ProjectDetailModalProps) {
+export function ProjectDetailModal({ scored, prefs, onClose }: ProjectDetailModalProps) {
   const [sizeSqm, setSizeSqm] = React.useState(REPRESENTATIVE_SQM);
 
   // The parser emits one apartment per lottery at REPRESENTATIVE_SQM (95).
@@ -45,8 +47,13 @@ export function ProjectDetailModal({ scored, onClose }: ProjectDetailModalProps)
   }, [baseApt.apt, sizeSqm]);
 
   const { result } = React.useMemo(
-    () => analyzeApartment(scored.project, scaledApt),
-    [scored.project, scaledApt],
+    () =>
+      analyzeApartment(scored.project, scaledApt, {
+        equityAsPercent: true,
+        equityPercent: prefs.equityPercent,
+        currentRent: prefs.currentRent,
+      }),
+    [scored.project, scaledApt, prefs.equityPercent, prefs.currentRent],
   );
 
   // Close on Esc.
@@ -140,7 +147,7 @@ function PerSqmCard({
   sizeSqm: number;
   scaledApt: ProjectApartment;
 }) {
-  const info = scored.project.pricePerSqm;
+  const info = scored.effectivePricePerSqm ?? scored.project.pricePerSqm;
   if (!info) return null;
 
   return (

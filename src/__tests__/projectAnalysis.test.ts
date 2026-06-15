@@ -30,7 +30,8 @@ describe("buildInputsForApartment", () => {
     const inputs = buildInputsForApartment(project, apt);
     expect(inputs.purchasePrice).toBe(2_200_000);
     expect(inputs.marketPrice).toBe(2_900_000);
-    expect(inputs.currentRent).toBe(7500);
+    // currentRent is the buyer's own residence rent (caller-supplied via
+    // user prefs); falls through to the sandbox default when not overridden.
     expect(inputs.rentalIncome).toBe(7500);
   });
 

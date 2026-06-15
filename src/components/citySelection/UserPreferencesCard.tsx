@@ -46,6 +46,16 @@ export function UserPreferencesCard({
             unit="₪"
             helper="כמה אתם משלמים כיום בשכירות (תרחיש C)"
           />
+          <SliderInput
+            label="אחוז הנחה למ״ר (% מהמחיר המוצג)"
+            value={prefs.discountOverride}
+            onChange={(n) => set("discountOverride", n)}
+            min={0.0}
+            max={0.5}
+            step={0.01}
+            asPercent
+            helper="ההנחה שמופעלת על מחיר המ״ר של ההגרלה. ברירת מחדל 25% לפי תקנון מחיר מטרה — שנו לבדיקת תרחישים."
+          />
         </div>
       </CardContent>
     </Card>

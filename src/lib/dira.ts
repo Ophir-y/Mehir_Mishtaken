@@ -72,7 +72,9 @@ export const LIVE_HEADERS: Record<string, string> = {
 
 /**
  * Per-m² derivation:
- *   - listPricePerSqm = `PricePerUnit` from API (gov-set, "המחיר המוצג").
+ *   - listPricePerSqm = `PricePerUnit × (1 + VAT)`. The API exposes the
+ *     pre-VAT gov-set price; buyers pay the VAT-inclusive list ("המחיר
+ *     המוצג כולל מע״מ"), which is also what the discount applies to.
  *   - discountPercent parsed from Notes HTML (e.g. "25%"), default 25%.
  *   - discountCapNIS parsed from Notes (e.g. "500,000 ₪"), default 500K.
  *   - lotteryPricePerSqm = list × (1 − discountPercent). The cap doesn't
@@ -88,10 +90,18 @@ export const LIVE_HEADERS: Record<string, string> = {
  * ONE apartment per lottery at a representative size of 95 m² (typical
  * 4-room). The detail modal can adjust this; the table doesn't depend on it.
  */
-const REPRESENTATIVE_SQM = 95;
+const REPRESENTATIVE_SQM = 110;
 const DEFAULT_DISCOUNT_PCT = 0.25;
 const DEFAULT_DISCOUNT_CAP_NIS = 500_000;
 const DEFAULT_HANDOVER_MONTHS = 30;
+/**
+ * Israeli VAT on new construction. The API's `PricePerUnit` is the gov-set
+ * ₪/m² BEFORE VAT; buyers actually pay `PricePerUnit × (1 + VAT)`. The
+ * regulation discount is applied to the displayed (VAT-inclusive) price
+ * per Notes: "25% ממחיר הדירה המוצג (כולל מע״מ)".
+ * Israel raised VAT from 17% to 18% on 2025-01-01.
+ */
+const VAT_RATE = 0.18;
 
 export function liveToProjects(live: unknown): Project[] {
   if (!live || typeof live !== "object") return [];
@@ -150,7 +160,8 @@ export function liveToProjects(live: unknown): Project[] {
     const discountCapNIS =
       parseDiscountCapNIS(notesHtml) ?? DEFAULT_DISCOUNT_CAP_NIS;
 
-    const listPricePerSqm = pricePerSqm ?? 0;
+    // API value is pre-VAT; bring it up to the buyer-facing list price.
+    const listPricePerSqm = Math.round((pricePerSqm ?? 0) * (1 + VAT_RATE));
     const lotteryPricePerSqm = Math.round(
       listPricePerSqm * (1 - discountPercent),
     );

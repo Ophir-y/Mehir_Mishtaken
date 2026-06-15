@@ -173,7 +173,7 @@ export function ProjectsTable({
                 selectedCities.length > 0 &&
                 !isCitySelected &&
                 !highlightOnlySelected;
-              const info = scored.project.pricePerSqm;
+              const info = scored.effectivePricePerSqm ?? scored.project.pricePerSqm;
               return (
                 <TableRow
                   key={scored.project.id}
@@ -258,7 +258,7 @@ export function ProjectsTable({
 
 function readKey(row: Row, key: SortKey): number {
   const { apt, scored } = row;
-  const info = scored.project.pricePerSqm;
+  const info = scored.effectivePricePerSqm ?? scored.project.pricePerSqm;
   switch (key) {
     case "score":
       return apt.score;

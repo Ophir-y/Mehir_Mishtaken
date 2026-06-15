@@ -99,4 +99,11 @@ export interface ScoredProject {
   apartments: ScoredApartment[];
   /** Convenience: same as best.score. */
   score: number;
+  /**
+   * Per-m² info adjusted for the user's discount override. When the user
+   * leaves the discount slider alone this equals `project.pricePerSqm`.
+   * UI components should prefer this over `project.pricePerSqm` so the
+   * displayed lottery ₪/m² and savings % follow the slider.
+   */
+  effectivePricePerSqm?: ProjectPricePerSqm;
 }

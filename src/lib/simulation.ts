@@ -1,5 +1,14 @@
 // Pure simulation for the Mehir Matara comparison app.
 // All currency values are in shekels (₪). Rates are annual unless noted.
+//
+// Architecture:
+//   1. Pure helper functions (no side effects, no state) for each calculation.
+//   2. A single `runSimulation` that composes them month-by-month.
+//   3. Each monthly step is its own function for clarity.
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export type ConstructionMode =
   | "interest_only"
@@ -20,29 +29,16 @@ export interface SimulationInputs {
 
   // Mortgage (post-handover Shpitzer)
   equity: number;
-  /**
-   * UI mode: when true, the effective equity is computed in App.tsx as
-   * `purchasePrice * equityPercent`. The `equity` field is then overwritten
-   * before reaching the simulation, so this flag is UI-only.
-   */
   equityAsPercent: boolean;
   equityPercent: number; // decimal, e.g. 0.25 = 25%
   mortgageAmount: number;
   termYears: number;
   mortgageRate: number; // annual decimal
 
-  // One-time costs.
-  // Three of these (madad, purchase tax, legal fees) are computed as a
-  // percentage of the purchase price — that's how they work in reality.
-  // The simulation computes the ₪ amount = purchasePrice * percent.
-  madadPercent: number; // construction cost index over the build period
-  /**
-   * Purchase tax (mas rechisha) is computed from the legal brackets — not a
-   * single percentage. This flag picks the bracket schedule: true → single
-   * residence (דירה יחידה), false → additional residence / investor rates.
-   */
+  // One-time costs
+  madadPercent: number;
   isSingleResidence: boolean;
-  legalFeesPercent: number; // עו״ד
+  legalFeesPercent: number;
   upgrades: number; // absolute ₪
   furniture: number; // absolute ₪
 
@@ -53,36 +49,25 @@ export interface SimulationInputs {
   // Rent
   currentRent: number;
   rentGrowth: number; // annual decimal
-  rentalIncome: number; // base, before vacancy/escalation (₪ mode)
-  /**
-   * When true, rental income each month is computed as
-   * `property_value * rentalIncomePercent / 12` (gross annual yield of the
-   * current asset value). In this mode the absolute `rentalIncome` field is
-   * ignored and `rentGrowth` is NOT applied to the rental income (since
-   * appreciation already moves the property value).
-   */
+  rentalIncome: number; // base ₪ (absolute mode)
   rentalIncomeAsPercent: boolean;
-  rentalIncomePercent: number; // annual decimal yield, e.g. 0.04 = 4%
+  rentalIncomePercent: number; // annual decimal yield
   vacancyMonths: number; // per year
 
   // Tax — apartment capital gain (mas shevach)
-  taxRate: number; // decimal
+  taxRate: number;
   exemption: boolean;
 
-  // Tax — rental income (Israel: ~10% track flat OR exempt below ~5,500 ₪)
+  // Tax — rental income
   rentalTaxEnabled: boolean;
-  rentalTaxRate: number; // decimal, default 0.10
-  rentalTaxExemption: number; // monthly ₪ exempt amount, default 5500
+  rentalTaxRate: number;
+  rentalTaxExemption: number; // monthly ₪ exempt amount
 
-  // Tax — S&P capital gains (Israel: 25% on REAL gain — nominal gain
-  // minus inflation indexation of the cost basis). When `inflation` is 0,
-  // collapses to nominal taxation.
+  // Tax — S&P capital gains (real gain, inflation-indexed)
   sp500TaxEnabled: boolean;
-  sp500TaxRate: number; // decimal, default 0.25
+  sp500TaxRate: number;
 
-  // Inflation — annual decimal. Used to index S&P contributions to current
-  // purchasing power before computing taxable gain (Israeli mas revach hon
-  // real-terms rule).
+  // Inflation
   inflation: number;
 
   // S&P
@@ -90,21 +75,21 @@ export interface SimulationInputs {
 }
 
 export interface MonthlyRow {
-  month: number; // 1-indexed since signing
-  year: number; // ceil(month/12)
+  month: number;
+  year: number;
   phase: "construction" | "post";
 
   // Construction-specific
   contractorPayment: number;
-  oneTimeCostsPaid: number; // tax/legal/upgrades/madad/furniture as they come due
+  oneTimeCostsPaid: number;
   equityUsed: number;
   mortgageDrawn: number;
-  drawnBalance: number; // end-of-month
+  drawnBalance: number;
   constructionInterestPaid: number;
   constructionPrincipalPaid: number;
-  constructionPayment: number; // total paid to bank this month during construction
+  constructionPayment: number;
 
-  // Post-handover-specific (zero during construction)
+  // Post-handover-specific
   mortgagePayment: number;
   interestPaid: number;
   principalPaid: number;
@@ -112,19 +97,18 @@ export interface MonthlyRow {
 
   // Both phases
   rentPaid: number;
-  rentalIncome: number; // gross
-  rentalTax: number; // monthly tax on rental income (scenario B)
-  netRentalIncome: number; // gross - tax
+  rentalIncome: number;
+  rentalTax: number;
+  netRentalIncome: number;
   insurancePaid: number;
   hoaPaid: number;
   propertyValue: number;
-  contractorObligation: number; // unpaid contractor balance (0 post-handover)
+  contractorObligation: number;
 
   homeEquity: number;
   capitalGain: number;
   masShevach: number;
 
-  // Cash flows we use for the portfolios
   housingCostA: number;
   housingCostB: number;
   housingCostC: number;
@@ -133,10 +117,6 @@ export interface MonthlyRow {
   portfolioB: number;
   portfolioC: number;
 
-  // Cumulative invested capital (nominal) and CPI-indexed (real, in current
-  // shekels). Provisioned S&P CGT uses the indexed series:
-  //   tax = max(0, portfolio - indexed_contributions) * rate
-  // The nominal contributions are exposed for transparency.
   contributionsB: number;
   contributionsC: number;
   contributionsBIndexed: number;
@@ -181,13 +161,34 @@ export interface SimulationResult {
 }
 
 // ============================================================================
-// Israeli purchase tax (mas rechisha) brackets — 2024-2025.
-// These thresholds are CPI-indexed and updated annually by Rashut HaMisim
-// (January each year). Update from
-// https://www.gov.il/he/departments/general/property-tax-rates
+// Rate conversion helpers
 // ============================================================================
 
-/** Tax bracket — apply `rate` to the portion of the price up to `upTo`. */
+/** Annual nominal rate → monthly rate. */
+export const toMonthly = (annual: number) => annual / 12;
+
+/** Annual return → monthly compound rate (geometric). */
+export const toMonthlyCompound = (annual: number) =>
+  Math.pow(1 + annual, 1 / 12) - 1;
+
+// ============================================================================
+// Escalation (rent / income growth by anniversary year)
+// ============================================================================
+
+/** Escalate a base amount by annual growth, applied on anniversary years. */
+export function escalateByYear(
+  base: number,
+  annualGrowth: number,
+  month: number,
+): number {
+  const year = Math.ceil(month / 12);
+  return base * Math.pow(1 + annualGrowth, Math.max(0, year - 1));
+}
+
+// ============================================================================
+// Israeli purchase tax (mas rechisha) — bracket schedule 2024-2025
+// ============================================================================
+
 interface TaxBracket {
   upTo: number;
   rate: number;
@@ -206,11 +207,6 @@ const PURCHASE_TAX_BRACKETS_INVESTOR: TaxBracket[] = [
   { upTo: Infinity, rate: 0.10 },
 ];
 
-/**
- * Compute Israeli purchase tax (mas rechisha) using the legal bracket schedule.
- * Bracketed: each portion of the price is taxed at the bracket rate that
- * contains it (NOT a flat rate that escalates over the whole price).
- */
 export function computePurchaseTax(
   price: number,
   isSingleResidence: boolean,
@@ -229,7 +225,6 @@ export function computePurchaseTax(
   return tax;
 }
 
-/** Effective purchase tax rate (tax / price), useful for display. */
 export function purchaseTaxEffectiveRate(
   price: number,
   isSingleResidence: boolean,
@@ -239,21 +234,12 @@ export function purchaseTaxEffectiveRate(
 }
 
 // ============================================================================
-// Mehir Matara resale lockup — earliest legal sale date.
-//   "Cannot sell before 7 years from raffle OR 5 years from handover —
-//    whichever is EARLIER."
-//   Source: Mehir Matara program regulations.
+// Mehir Matara resale lockup
 // ============================================================================
 
 export const LOCKUP_YEARS_FROM_RAFFLE = 7;
 export const LOCKUP_YEARS_FROM_HANDOVER = 5;
 
-/**
- * Minimum months the buyer must hold the apartment AFTER handover before they
- * can legally sell. Construction time is counted toward the 7-year-from-raffle
- * clock, so longer construction shortens the post-handover lockup (down to a
- * floor of zero if construction itself exceeds 7 years).
- */
 export function legalHoldingMonthsAfterHandover(
   constructionMonths: number,
 ): number {
@@ -265,7 +251,11 @@ export function legalHoldingMonthsAfterHandover(
   );
 }
 
-/** Standard Shpitzer monthly payment. */
+// ============================================================================
+// Mortgage helpers
+// ============================================================================
+
+/** Standard Shpitzer (constant-payment amortization) monthly payment. */
 export function pmt(principal: number, monthlyRate: number, n: number): number {
   if (n <= 0) return 0;
   if (monthlyRate === 0) return principal / n;
@@ -275,241 +265,359 @@ export function pmt(principal: number, monthlyRate: number, n: number): number {
   );
 }
 
-/** Annual rate → monthly rate. */
-const monthly = (annual: number) => annual / 12;
-/** Annual return → monthly compound return. */
-const monthlyCompound = (annual: number) =>
-  Math.pow(1 + annual, 1 / 12) - 1;
-
-/** Rent / income escalator: anniversary years since signing. */
-function escalatedRent(base: number, growth: number, month: number): number {
-  // Year index since signing (1-based): month 1..12 → year 1, 13..24 → year 2, etc.
-  // Apply growth in subsequent years: year_factor = (1+growth)^(year-1)
-  const year = Math.ceil(month / 12);
-  return base * Math.pow(1 + growth, Math.max(0, year - 1));
+/** One month of amortization: returns { interest, principal, newBalance }. */
+export function amortizeOneMonth(
+  balance: number,
+  monthlyRate: number,
+  pmtAmount: number,
+): { interest: number; principal: number; newBalance: number } {
+  const interest = balance * monthlyRate;
+  const principal = Math.max(0, Math.min(balance, pmtAmount - interest));
+  const newBalance = Math.max(0, balance - principal);
+  return { interest, principal, newBalance };
 }
 
-export function runSimulation(inputs: SimulationInputs): SimulationResult {
-  const {
-    purchasePrice,
-    marketPrice,
-    appreciation,
-    holdingYears,
-    constructionMonths,
-    signingPct,
-    constructionMode,
-    equity,
-    mortgageAmount,
-    termYears,
-    mortgageRate,
-    madadPercent,
-    isSingleResidence,
-    legalFeesPercent,
-    upgrades,
-    furniture,
-    insurance,
-    hoa,
-    currentRent,
-    rentGrowth,
-    rentalIncome,
-    rentalIncomeAsPercent,
-    rentalIncomePercent,
-    vacancyMonths,
-    taxRate,
-    exemption,
-    rentalTaxEnabled,
-    rentalTaxRate,
-    rentalTaxExemption,
-    sp500TaxEnabled,
-    sp500TaxRate,
-    inflation,
-    sp500Return,
-  } = inputs;
+// ============================================================================
+// One-time cost calculations
+// ============================================================================
 
-  // Convert the percentage-based costs to absolute ₪ on the purchase price.
-  // Purchase tax uses the legal bracket schedule (not a flat percentage).
-  const madad = purchasePrice * madadPercent;
-  const purchaseTax = computePurchaseTax(purchasePrice, isSingleResidence);
-  const legalFees = purchasePrice * legalFeesPercent;
-  const oneTimeCosts = madad + purchaseTax + legalFees + upgrades + furniture;
-  const handoverMonth = constructionMonths;
-  const postHandoverMonths = holdingYears * 12;
-  const totalMonths = handoverMonth + postHandoverMonths;
+/** Compute all one-time costs as a total ₪ amount. */
+export function computeOneTimeCosts(inputs: SimulationInputs): number {
+  const madad = inputs.purchasePrice * inputs.madadPercent;
+  const purchaseTax = computePurchaseTax(
+    inputs.purchasePrice,
+    inputs.isSingleResidence,
+  );
+  const legalFees = inputs.purchasePrice * inputs.legalFeesPercent;
+  return madad + purchaseTax + legalFees + inputs.upgrades + inputs.furniture;
+}
 
-  const rMort = monthly(mortgageRate);
-  const rSp = monthlyCompound(sp500Return);
-  const termMonths = termYears * 12;
-  const shpitzerPMT = pmt(mortgageAmount, rMort, termMonths);
+/**
+ * One-time costs due in a given construction month.
+ *
+ * Timing:
+ *  - Month 1: purchase tax + legal fees + upgrades
+ *  - Each construction month: madad spread uniformly
+ *  - Handover month (last construction month): furniture
+ *  - constructionMonths === 0: everything collapses to month 1
+ */
+export function oneTimeCostsDue(
+  month: number,
+  constructionMonths: number,
+  purchaseTax: number,
+  legalFees: number,
+  upgrades: number,
+  madad: number,
+  furniture: number,
+): number {
+  if (constructionMonths <= 0) {
+    return month === 1
+      ? purchaseTax + legalFees + upgrades + madad + furniture
+      : 0;
+  }
+  let amount = 0;
+  if (month === 1) {
+    amount += purchaseTax + legalFees + upgrades;
+  }
+  if (month >= 1 && month <= constructionMonths) {
+    amount += madad / constructionMonths;
+  }
+  if (month === constructionMonths) {
+    amount += furniture;
+  }
+  return amount;
+}
 
-  // ===== Construction schedule of contractor payments =====
-  // Month 1: signing payment (purchasePrice * signingPct).
-  // Months 2..handover: equal slices of (purchasePrice - signing) / (handover - 1).
-  // Edge case: constructionMonths === 0 → no construction phase.
-  // Edge case: constructionMonths === 1 → signing month IS handover; entire price due at signing.
+// ============================================================================
+// Contractor payment schedule
+// ============================================================================
+
+/**
+ * Contractor payment due in a given construction month.
+ *
+ * Schedule:
+ *  - Month 1: signing payment = purchasePrice * signingPct
+ *  - Months 2..handover: equal slices of (price - signing) / (handover - 1)
+ *  - constructionMonths === 1: entire price at signing
+ *  - constructionMonths === 0: nothing
+ */
+export function contractorDue(
+  month: number,
+  constructionMonths: number,
+  purchasePrice: number,
+  signingPct: number,
+): number {
+  if (constructionMonths <= 0) return 0;
   const signingPayment = purchasePrice * signingPct;
-  function contractorDue(month: number): number {
-    if (constructionMonths <= 0) return 0;
-    if (month === 1) {
-      // If only one construction month, the entire purchase is due now.
-      return constructionMonths === 1 ? purchasePrice : signingPayment;
-    }
-    if (month <= constructionMonths) {
-      return (purchasePrice - signingPayment) / (constructionMonths - 1);
-    }
-    return 0;
+  if (month === 1) {
+    return constructionMonths === 1 ? purchasePrice : signingPayment;
+  }
+  if (month <= constructionMonths) {
+    return (purchasePrice - signingPayment) / (constructionMonths - 1);
+  }
+  return 0;
+}
+
+// ============================================================================
+// Rental income calculation
+// ============================================================================
+
+/** Compute gross rental income for a given month. */
+export function computeRentalIncome(
+  month: number,
+  propertyValue: number,
+  rentalIncomeAbsolute: number,
+  rentalIncomeAsPercent: boolean,
+  rentalIncomePercent: number,
+  rentGrowth: number,
+  vacancyMonths: number,
+): number {
+  if (rentalIncomeAsPercent) {
+    const monthlyGross = (propertyValue * rentalIncomePercent) / 12;
+    return monthlyGross * (1 - vacancyMonths / 12);
+  }
+  const grossRental = rentalIncomeAbsolute * (1 - vacancyMonths / 12);
+  return escalateByYear(grossRental, rentGrowth, month);
+}
+
+// ============================================================================
+// Rental income tax (simplified Israeli model)
+// ============================================================================
+
+export function computeRentalTax(
+  grossIncome: number,
+  enabled: boolean,
+  rate: number,
+  exemptionAmount: number,
+): number {
+  if (!enabled) return 0;
+  return Math.max(0, grossIncome - exemptionAmount) * rate;
+}
+
+// ============================================================================
+// Capital gains tax — mas shevach (apartment)
+// ============================================================================
+
+export function computeMasShevach(
+  capitalGain: number,
+  exemption: boolean,
+  taxRate: number,
+): number {
+  if (exemption) return 0;
+  return Math.max(0, capitalGain) * taxRate;
+}
+
+// ============================================================================
+// S&P 500 capital gains tax (Israeli real-gain rule)
+// ============================================================================
+
+export function computeSP500Tax(
+  portfolio: number,
+  indexedContributions: number,
+  enabled: boolean,
+  rate: number,
+): number {
+  if (!enabled) return 0;
+  const realGain = portfolio - Math.max(0, indexedContributions);
+  return Math.max(0, realGain) * rate;
+}
+
+// ============================================================================
+// Portfolio monthly growth
+// ============================================================================
+
+export function growPortfolio(
+  portfolio: number,
+  monthlyRate: number,
+  deposit: number,
+): number {
+  return portfolio * (1 + monthlyRate) + deposit;
+}
+
+/** CPI-index existing contributions, then add new deposit at face value. */
+export function indexContributions(
+  indexed: number,
+  rInflation: number,
+  newDeposit: number,
+): number {
+  return indexed * (1 + rInflation) + newDeposit;
+}
+
+// ============================================================================
+// Property value
+// ============================================================================
+
+export function computePropertyValue(
+  marketPrice: number,
+  appreciation: number,
+  month: number,
+): number {
+  return marketPrice * Math.pow(1 + appreciation, month / 12);
+}
+
+// ============================================================================
+// Construction-phase monthly step
+// ============================================================================
+
+interface ConstructionStepInput {
+  month: number;
+  constructionMonths: number;
+  purchasePrice: number;
+  signingPct: number;
+  constructionMode: ConstructionMode;
+
+  rMort: number;
+  termMonths: number;
+  mortgageAmount: number;
+  equityRemaining: number;
+  drawnBalance: number;
+  contractorObligation: number;
+
+  purchaseTax: number;
+  legalFees: number;
+  upgrades: number;
+  madad: number;
+  furniture: number;
+
+  marketPrice: number;
+  appreciation: number;
+  oneTimeCosts: number;
+
+  currentRent: number;
+  rentGrowth: number;
+
+  rSp: number;
+  rInflation: number;
+
+  portfolioB: number;
+  portfolioC: number;
+  contributionsB: number;
+  contributionsC: number;
+  contributionsBIndexed: number;
+  contributionsCIndexed: number;
+
+  sp500TaxEnabled: boolean;
+  sp500TaxRate: number;
+}
+
+interface ConstructionStepOutput {
+  row: MonthlyRow;
+  equityRemaining: number;
+  drawnBalance: number;
+  contractorObligation: number;
+  portfolioB: number;
+  portfolioC: number;
+  contributionsB: number;
+  contributionsC: number;
+  contributionsBIndexed: number;
+  contributionsCIndexed: number;
+}
+
+function constructionStep(
+  inp: ConstructionStepInput,
+): ConstructionStepOutput {
+  const {
+    month, constructionMonths, purchasePrice, signingPct, constructionMode,
+    rMort, termMonths, mortgageAmount, equityRemaining, drawnBalance,
+    contractorObligation, purchaseTax, legalFees, upgrades, madad, furniture,
+    marketPrice, appreciation, oneTimeCosts, currentRent, rentGrowth,
+    rSp, rInflation,
+    portfolioB, portfolioC, contributionsB, contributionsC,
+    contributionsBIndexed, contributionsCIndexed,
+    sp500TaxEnabled, sp500TaxRate,
+  } = inp;
+
+  const due = contractorDue(month, constructionMonths, purchasePrice, signingPct);
+  const costsDue = oneTimeCostsDue(
+    month, constructionMonths, purchaseTax, legalFees, upgrades, madad, furniture,
+  );
+  const totalDue = due + costsDue;
+
+  // Equity covers outflow first, then mortgage drawdown.
+  const equityUsed = Math.min(equityRemaining, totalDue);
+  const remainingEquity = equityRemaining - equityUsed;
+  const mortgageDrawn = totalDue - equityUsed;
+  const cappedDraw = Math.min(mortgageDrawn, mortgageAmount - drawnBalance);
+  const newDrawnBalance = drawnBalance + cappedDraw;
+  const newContractorObligation = Math.max(0, contractorObligation - due);
+
+  // Construction-phase mortgage behaviour.
+  let interestThisMonth = newDrawnBalance * rMort;
+  let principalThisMonth = 0;
+  let paymentThisMonth = 0;
+  let finalDrawnBalance = newDrawnBalance;
+
+  if (constructionMode === "interest_only") {
+    paymentThisMonth = interestThisMonth;
+  } else if (constructionMode === "full_grace") {
+    finalDrawnBalance = newDrawnBalance + interestThisMonth;
+    paymentThisMonth = 0;
+    interestThisMonth = 0;
+  } else {
+    const partialPmt = pmt(newDrawnBalance, rMort, termMonths);
+    paymentThisMonth = partialPmt;
+    principalThisMonth = Math.max(0, partialPmt - interestThisMonth);
+    finalDrawnBalance = Math.max(0, newDrawnBalance - principalThisMonth);
   }
 
-  /**
-   * One-time costs paid this month, by timing:
-   *  - Month 1: purchase tax + legal fees + upgrades (paid at signing)
-   *  - Each construction month: madad spread uniformly (accrues on the
-   *    unpaid contractor balance — uniform is a good approximation)
-   *  - Handover month: furniture (you only buy furniture when you have keys)
-   *  - If constructionMonths === 0: everything collapses into month 1.
-   */
-  function oneTimeCostsDue(month: number): number {
-    if (constructionMonths <= 0) {
-      return month === 1
-        ? purchaseTax + legalFees + upgrades + madad + furniture
-        : 0;
-    }
-    let amount = 0;
-    if (month === 1) {
-      amount += purchaseTax + legalFees + upgrades;
-    }
-    if (month >= 1 && month <= constructionMonths) {
-      amount += madad / constructionMonths;
-    }
-    if (month === constructionMonths) {
-      amount += furniture;
-    }
-    return amount;
-  }
+  const rentPaid = escalateByYear(currentRent, rentGrowth, month);
+  const propertyValue = computePropertyValue(marketPrice, appreciation, month);
+  const liabilities = finalDrawnBalance + newContractorObligation;
+  const homeEquity = propertyValue - liabilities;
+  const capitalGain = propertyValue - (purchasePrice + oneTimeCosts);
 
-  let equityRemaining = equity;
-  let drawnBalance = 0;
-  let contractorObligation = purchasePrice;
-  let portfolioB = 0;
-  // C starts with `equity`. One-time costs are financed inside the mortgage
-  // (App.tsx adds them to `mortgageAmount`), so A/B feel them as larger
-  // monthly Shpitzer payments — that surplus then flows into C's portfolio
-  // via the housing-cost differential.
-  let portfolioC = equity;
-  let remainingBalance = mortgageAmount;
-  // Track total invested capital for S&P CGT — both nominal and CPI-indexed.
-  let contributionsB = 0;
-  let contributionsC = equity;
-  let contributionsBIndexed = 0;
-  let contributionsCIndexed = equity;
-  const rInflation = monthlyCompound(inflation);
+  const housingCostA = rentPaid + paymentThisMonth;
+  const housingCostB = housingCostA;
+  const housingCostC = rentPaid;
 
-  /** Provisioned S&P CGT on REAL gain (no loss credit). */
-  function sp500Tax(portfolio: number, indexedContributions: number): number {
-    if (!sp500TaxEnabled) return 0;
-    const realGain = portfolio - Math.max(0, indexedContributions);
-    return Math.max(0, realGain) * sp500TaxRate;
-  }
+  // During construction B is identical to A: both bought, neither has the
+  // apartment yet, neither earns rental income, both pay rent on their own
+  // place. So B's investable differential is 0 — the previous `-rentPaid`
+  // formula drove B's portfolio massively negative through the build period.
+  //
+  // C invests the housing-cost differential. paymentThisMonth ≥ 0 by
+  // construction, so the floor at 0 below is just a guard.
+  const portfolioCDeposit = Math.max(0, housingCostA - housingCostC);
+  const portfolioBDeposit = 0;
+  const newPortfolioC = growPortfolio(portfolioC, rSp, portfolioCDeposit);
+  const newPortfolioB = growPortfolio(portfolioB, rSp, portfolioBDeposit);
+  const newContributionsB = contributionsB + portfolioBDeposit;
+  const newContributionsC = contributionsC + portfolioCDeposit;
+  const newContributionsBIndexed = indexContributions(
+    contributionsBIndexed, rInflation, portfolioBDeposit,
+  );
+  const newContributionsCIndexed = indexContributions(
+    contributionsCIndexed, rInflation, portfolioCDeposit,
+  );
 
-  // The implicit "budget" we use to make the three scenarios comparable is
-  // scenario-A's housing cost. C invests the difference; B reinvests
-  // (rental_income - rent_paid). Insurance + HOA cancel out between A and B,
-  // and the mortgage payment is captured by home equity (property value minus
-  // remaining balance), so portfolio B only sees rent flows.
+  const sp500TaxBNow = computeSP500Tax(
+    newPortfolioB, newContributionsBIndexed, sp500TaxEnabled, sp500TaxRate,
+  );
+  const sp500TaxCNow = computeSP500Tax(
+    newPortfolioC, newContributionsCIndexed, sp500TaxEnabled, sp500TaxRate,
+  );
 
-  const monthlyRows: MonthlyRow[] = [];
+  const netWorthA = homeEquity;
+  const netWorthB = homeEquity + newPortfolioB - sp500TaxBNow;
+  const netWorthC = newPortfolioC - sp500TaxCNow;
 
-  // ===== CONSTRUCTION PHASE =====
-  for (let m = 1; m <= constructionMonths; m++) {
-    const due = contractorDue(m);
-    const costsDue = oneTimeCostsDue(m);
-    const totalDue = due + costsDue;
-
-    // Equity covers any outflow first (contractor + one-time costs).
-    const equityUsed = Math.min(equityRemaining, totalDue);
-    equityRemaining -= equityUsed;
-    const mortgageDrawn = totalDue - equityUsed;
-    // Cap drawdowns so we never exceed the contracted mortgage amount.
-    const cappedDraw = Math.min(mortgageDrawn, mortgageAmount - drawnBalance);
-
-    // Add drawdown first.
-    drawnBalance += cappedDraw;
-    contractorObligation -= due;
-    if (contractorObligation < 0) contractorObligation = 0;
-
-    // Apply construction-phase mortgage behaviour.
-    let interestThisMonth = drawnBalance * rMort;
-    let principalThisMonth = 0;
-    let paymentThisMonth = 0;
-
-    if (constructionMode === "interest_only") {
-      // Pay interest, no principal. Drawn balance stays.
-      paymentThisMonth = interestThisMonth;
-    } else if (constructionMode === "full_grace") {
-      // Capitalize interest into the drawn balance, no cash payment.
-      drawnBalance += interestThisMonth;
-      paymentThisMonth = 0;
-      // Recompute reported "interest paid" as 0 (we capitalized it).
-      interestThisMonth = 0;
-    } else {
-      // Partial Shpitzer on drawn balance, term = mortgage term (rough model).
-      const partialPmt = pmt(drawnBalance, rMort, termMonths);
-      paymentThisMonth = partialPmt;
-      principalThisMonth = Math.max(0, partialPmt - interestThisMonth);
-      drawnBalance = Math.max(0, drawnBalance - principalThisMonth);
-    }
-
-    const rentPaid = escalatedRent(currentRent, rentGrowth, m);
-
-    // Property appreciation tracked monthly.
-    const propertyValue =
-      marketPrice * Math.pow(1 + appreciation, m / 12);
-    const liabilities = drawnBalance + contractorObligation;
-    const homeEquity = propertyValue - liabilities;
-
-    // No mas shevach during construction (apartment not sold).
-    const capitalGain = propertyValue - (purchasePrice + oneTimeCosts);
-
-    // Housing costs (cash out-of-pocket each month).
-    const housingCostA = rentPaid + paymentThisMonth;
-    const housingCostB = housingCostA; // no rental income — no keys yet
-    const housingCostC = rentPaid;
-
-    // Portfolio C deposits the difference between scenario A and C, which
-    // during construction equals the mortgage payment (interest etc.).
-    const portfolioCDeposit = housingCostA - housingCostC; // = paymentThisMonth
-    const portfolioBDeposit = -rentPaid; // 0 rental income during construction
-    portfolioC = portfolioC * (1 + rSp) + portfolioCDeposit;
-    portfolioB = portfolioB * (1 + rSp) + portfolioBDeposit;
-    contributionsB += portfolioBDeposit;
-    contributionsC += portfolioCDeposit;
-    // CPI-index existing contributions, then add new deposit at face value.
-    contributionsBIndexed = contributionsBIndexed * (1 + rInflation) + portfolioBDeposit;
-    contributionsCIndexed = contributionsCIndexed * (1 + rInflation) + portfolioCDeposit;
-
-    const sp500TaxBNow = sp500Tax(portfolioB, contributionsBIndexed);
-    const sp500TaxCNow = sp500Tax(portfolioC, contributionsCIndexed);
-
-    // Net worth (after provisioned S&P CGT).
-    const netWorthA = homeEquity;
-    const netWorthB = homeEquity + portfolioB - sp500TaxBNow;
-    const netWorthC = portfolioC - sp500TaxCNow;
-
-    monthlyRows.push({
-      month: m,
-      year: Math.ceil(m / 12),
+  return {
+    row: {
+      month,
+      year: Math.ceil(month / 12),
       phase: "construction",
       contractorPayment: due,
       oneTimeCostsPaid: costsDue,
       equityUsed,
       mortgageDrawn: cappedDraw,
-      drawnBalance,
+      drawnBalance: finalDrawnBalance,
       constructionInterestPaid: interestThisMonth,
       constructionPrincipalPaid: principalThisMonth,
       constructionPayment: paymentThisMonth,
       mortgagePayment: 0,
       interestPaid: 0,
       principalPaid: 0,
-      remainingBalance: drawnBalance, // for reference during construction
+      remainingBalance: finalDrawnBalance,
       rentPaid,
       rentalIncome: 0,
       rentalTax: 0,
@@ -517,7 +625,7 @@ export function runSimulation(inputs: SimulationInputs): SimulationResult {
       insurancePaid: 0,
       hoaPaid: 0,
       propertyValue,
-      contractorObligation,
+      contractorObligation: newContractorObligation,
       homeEquity,
       capitalGain,
       masShevach: 0,
@@ -526,111 +634,174 @@ export function runSimulation(inputs: SimulationInputs): SimulationResult {
       housingCostC,
       portfolioBDeposit,
       portfolioCDeposit,
-      portfolioB,
-      portfolioC,
-      contributionsB,
-      contributionsC,
-      contributionsBIndexed,
-      contributionsCIndexed,
+      portfolioB: newPortfolioB,
+      portfolioC: newPortfolioC,
+      contributionsB: newContributionsB,
+      contributionsC: newContributionsC,
+      contributionsBIndexed: newContributionsBIndexed,
+      contributionsCIndexed: newContributionsCIndexed,
       sp500TaxB: sp500TaxBNow,
       sp500TaxC: sp500TaxCNow,
       netWorthA,
       netWorthB,
       netWorthC,
-    });
-  }
+    },
+    equityRemaining: remainingEquity,
+    drawnBalance: finalDrawnBalance,
+    contractorObligation: newContractorObligation,
+    portfolioB: newPortfolioB,
+    portfolioC: newPortfolioC,
+    contributionsB: newContributionsB,
+    contributionsC: newContributionsC,
+    contributionsBIndexed: newContributionsBIndexed,
+    contributionsCIndexed: newContributionsCIndexed,
+  };
+}
 
-  // ===== HANDOVER TOP-UP =====
-  // The drawn balance must equal the contracted mortgage amount before the
-  // post-handover Shpitzer starts. Two ways this can land short:
-  //   1) `constructionMonths === 0` — the construction loop never ran, so
-  //      drawnBalance is still 0. Top up the whole mortgage at handover.
-  //   2) `constructionMonths > 0` but equity exceeded the signing payment,
-  //      so the bank lent less during construction than the final balance.
-  //      The borrower draws the remainder as cash at handover.
-  if (drawnBalance < mortgageAmount) {
-    drawnBalance = mortgageAmount;
-  }
-  remainingBalance = drawnBalance; // standard Shpitzer starts from here
+// ============================================================================
+// Post-handover monthly step
+// ============================================================================
 
-  // ===== POST-HANDOVER PHASE =====
-  for (let k = 1; k <= postHandoverMonths; k++) {
-    const m = handoverMonth + k;
-    const interestThisMonth = remainingBalance * rMort;
-    const principalThisMonth = Math.min(
-      remainingBalance,
-      shpitzerPMT - interestThisMonth,
-    );
-    remainingBalance = Math.max(0, remainingBalance - principalThisMonth);
-    const mortgagePayment = interestThisMonth + principalThisMonth;
+interface PostHandoverStepInput {
+  month: number;
+  handoverMonth: number;
+  constructionMonths: number;
 
-    const rentPaid = escalatedRent(currentRent, rentGrowth, m);
-    const propertyValue =
-      marketPrice * Math.pow(1 + appreciation, m / 12);
+  remainingBalance: number;
+  shpitzerPMT: number;
+  rMort: number;
 
-    // Rental income — two modes:
-    //  - absolute ₪: base * (1 - vacancy/12), escalated by rentGrowth annually.
-    //  - % of property value: propertyValue * pct / 12 * (1 - vacancy/12).
-    //    No rentGrowth applied — appreciation already moves propertyValue.
-    let rentalIncomeThisMonth: number;
-    if (rentalIncomeAsPercent) {
-      const monthlyGross = (propertyValue * rentalIncomePercent) / 12;
-      rentalIncomeThisMonth = monthlyGross * (1 - vacancyMonths / 12);
-    } else {
-      const grossRental = rentalIncome * (1 - vacancyMonths / 12);
-      rentalIncomeThisMonth = escalatedRent(grossRental, rentGrowth, m);
-    }
+  marketPrice: number;
+  appreciation: number;
+  purchasePrice: number;
+  oneTimeCosts: number;
 
-    // Rental income tax (Israel): simplified model = (gross - monthly exempt) * rate.
-    // Reflects the "above ~5,500 ₪ is taxable" rule; the actual exemption-track
-    // formula is more complex (see ExplanationsPanel).
-    const rentalTaxThisMonth = rentalTaxEnabled
-      ? Math.max(0, rentalIncomeThisMonth - rentalTaxExemption) * rentalTaxRate
-      : 0;
-    const netRentalIncome = rentalIncomeThisMonth - rentalTaxThisMonth;
+  currentRent: number;
+  rentGrowth: number;
+  rentalIncome: number;
+  rentalIncomeAsPercent: boolean;
+  rentalIncomePercent: number;
+  vacancyMonths: number;
 
-    const homeEquity = propertyValue - remainingBalance;
-    const capitalGain = propertyValue - (purchasePrice + oneTimeCosts);
-    const masShevach = exemption
-      ? 0
-      : Math.max(0, capitalGain) * taxRate;
+  rentalTaxEnabled: boolean;
+  rentalTaxRate: number;
+  rentalTaxExemption: number;
 
-    const housingCostA = mortgagePayment + insurance + hoa;
-    const housingCostB = mortgagePayment + insurance + hoa - netRentalIncome;
-    const housingCostC = rentPaid;
+  taxRate: number;
+  exemption: boolean;
+  insurance: number;
+  hoa: number;
 
-    // Portfolio C: invest the difference between A's housing cost and C's
-    // housing cost. Result reflects the "what if you had not bought" world.
-    const portfolioCDeposit = housingCostA - housingCostC;
-    portfolioC = portfolioC * (1 + rSp) + portfolioCDeposit;
-    contributionsC += portfolioCDeposit;
+  rSp: number;
+  rInflation: number;
 
-    // Portfolio B: only rent flows (mortgage and opex already captured by
-    // home equity and cancel against A's budget). Uses NET rental income
-    // (after rental-income tax).
-    const portfolioBDeposit = netRentalIncome - rentPaid;
-    portfolioB = portfolioB * (1 + rSp) + portfolioBDeposit;
-    contributionsB += portfolioBDeposit;
+  portfolioB: number;
+  portfolioC: number;
+  contributionsB: number;
+  contributionsC: number;
+  contributionsBIndexed: number;
+  contributionsCIndexed: number;
 
-    // CPI-index existing contributions, then add this month's deposit at face value.
-    contributionsBIndexed = contributionsBIndexed * (1 + rInflation) + portfolioBDeposit;
-    contributionsCIndexed = contributionsCIndexed * (1 + rInflation) + portfolioCDeposit;
+  sp500TaxEnabled: boolean;
+  sp500TaxRate: number;
 
-    const sp500TaxBNow = sp500Tax(portfolioB, contributionsBIndexed);
-    const sp500TaxCNow = sp500Tax(portfolioC, contributionsCIndexed);
+  oneTimeCostsDue: number;
+}
 
-    const netWorthA = homeEquity - masShevach;
-    const netWorthB = homeEquity - masShevach + portfolioB - sp500TaxBNow;
-    const netWorthC = portfolioC - sp500TaxCNow;
+interface PostHandoverStepOutput {
+  row: MonthlyRow;
+  remainingBalance: number;
+  portfolioB: number;
+  portfolioC: number;
+  contributionsB: number;
+  contributionsC: number;
+  contributionsBIndexed: number;
+  contributionsCIndexed: number;
+}
 
-    monthlyRows.push({
-      month: m,
-      year: Math.ceil(m / 12),
+function postHandoverStep(
+  inp: PostHandoverStepInput,
+): PostHandoverStepOutput {
+  const {
+    month, handoverMonth, constructionMonths,
+    remainingBalance: prevBalance, shpitzerPMT, rMort,
+    marketPrice, appreciation, purchasePrice, oneTimeCosts,
+    currentRent, rentGrowth, rentalIncome, rentalIncomeAsPercent,
+    rentalIncomePercent, vacancyMonths,
+    rentalTaxEnabled, rentalTaxRate, rentalTaxExemption,
+    taxRate, exemption, insurance, hoa,
+    rSp, rInflation,
+    portfolioB, portfolioC, contributionsB, contributionsC,
+    contributionsBIndexed, contributionsCIndexed,
+    sp500TaxEnabled, sp500TaxRate,
+    oneTimeCostsDue: oneTimeCostsPaid,
+  } = inp;
+
+  const amort = amortizeOneMonth(prevBalance, rMort, shpitzerPMT);
+  const mortgagePayment = amort.interest + amort.principal;
+  const remainingBalance = amort.newBalance;
+
+  const rentPaid = escalateByYear(currentRent, rentGrowth, month);
+  const propertyValue = computePropertyValue(marketPrice, appreciation, month);
+
+  const rentalIncomeThisMonth = computeRentalIncome(
+    month, propertyValue, rentalIncome, rentalIncomeAsPercent,
+    rentalIncomePercent, rentGrowth, vacancyMonths,
+  );
+  const rentalTaxThisMonth = computeRentalTax(
+    rentalIncomeThisMonth, rentalTaxEnabled, rentalTaxRate, rentalTaxExemption,
+  );
+  const netRentalIncome = rentalIncomeThisMonth - rentalTaxThisMonth;
+
+  const homeEquity = propertyValue - remainingBalance;
+  const capitalGain = propertyValue - (purchasePrice + oneTimeCosts);
+  const masShevach = computeMasShevach(capitalGain, exemption, taxRate);
+
+  const housingCostA = mortgagePayment + insurance + hoa;
+  const housingCostB = mortgagePayment + insurance + hoa - netRentalIncome;
+  const housingCostC = rentPaid;
+
+  // C is a non-investor in this comparison — they never sell stocks to top
+  // up rent. Floor C's deposit at 0.
+  const portfolioCDeposit = Math.max(0, housingCostA - housingCostC);
+  const newPortfolioC = growPortfolio(portfolioC, rSp, portfolioCDeposit);
+  const newContributionsC = contributionsC + portfolioCDeposit;
+  const newContributionsCIndexed = indexContributions(
+    contributionsCIndexed, rInflation, portfolioCDeposit,
+  );
+
+  // B is actively running a rental business — they ARE invested. If net
+  // rental income falls short of their own rent (rental tax + vacancy +
+  // own residence rent ≈ rental income), the shortfall comes from B's
+  // savings each month. portfolioB CAN go slightly negative, representing
+  // out-of-pocket subsidy. That's what differentiates B from A.
+  const portfolioBDeposit = netRentalIncome - rentPaid;
+  const newPortfolioB = growPortfolio(portfolioB, rSp, portfolioBDeposit);
+  const newContributionsB = contributionsB + portfolioBDeposit;
+  const newContributionsBIndexed = indexContributions(
+    contributionsBIndexed, rInflation, portfolioBDeposit,
+  );
+
+  const sp500TaxBNow = computeSP500Tax(
+    newPortfolioB, newContributionsBIndexed, sp500TaxEnabled, sp500TaxRate,
+  );
+  const sp500TaxCNow = computeSP500Tax(
+    newPortfolioC, newContributionsCIndexed, sp500TaxEnabled, sp500TaxRate,
+  );
+
+  const netWorthA = homeEquity - masShevach;
+  const netWorthB = homeEquity - masShevach + newPortfolioB - sp500TaxBNow;
+  const netWorthC = newPortfolioC - sp500TaxCNow;
+
+  const isZeroConstructionFirstPost = constructionMonths === 0 && (month - handoverMonth) === 1;
+
+  return {
+    row: {
+      month,
+      year: Math.ceil(month / 12),
       phase: "post",
       contractorPayment: 0,
-      // No-construction case: month 1 of post-handover is when all costs land.
-      oneTimeCostsPaid:
-        constructionMonths === 0 && k === 1 ? oneTimeCostsDue(1) : 0,
+      oneTimeCostsPaid: isZeroConstructionFirstPost ? oneTimeCostsPaid : 0,
       equityUsed: 0,
       mortgageDrawn: 0,
       drawnBalance: remainingBalance,
@@ -638,8 +809,8 @@ export function runSimulation(inputs: SimulationInputs): SimulationResult {
       constructionPrincipalPaid: 0,
       constructionPayment: 0,
       mortgagePayment,
-      interestPaid: interestThisMonth,
-      principalPaid: principalThisMonth,
+      interestPaid: amort.interest,
+      principalPaid: amort.principal,
       remainingBalance,
       rentPaid,
       rentalIncome: rentalIncomeThisMonth,
@@ -657,18 +828,182 @@ export function runSimulation(inputs: SimulationInputs): SimulationResult {
       housingCostC,
       portfolioBDeposit,
       portfolioCDeposit,
+      portfolioB: newPortfolioB,
+      portfolioC: newPortfolioC,
+      contributionsB: newContributionsB,
+      contributionsC: newContributionsC,
+      contributionsBIndexed: newContributionsBIndexed,
+      contributionsCIndexed: newContributionsCIndexed,
+      sp500TaxB: sp500TaxBNow,
+      sp500TaxC: sp500TaxCNow,
+      netWorthA,
+      netWorthB,
+      netWorthC,
+    },
+    remainingBalance,
+    portfolioB: newPortfolioB,
+    portfolioC: newPortfolioC,
+    contributionsB: newContributionsB,
+    contributionsC: newContributionsC,
+    contributionsBIndexed: newContributionsBIndexed,
+    contributionsCIndexed: newContributionsCIndexed,
+  };
+}
+
+// ============================================================================
+// Main simulation
+// ============================================================================
+
+export function runSimulation(inputs: SimulationInputs): SimulationResult {
+  const {
+    purchasePrice, marketPrice, appreciation, holdingYears,
+    constructionMonths, signingPct, constructionMode,
+    equity, mortgageAmount, termYears, mortgageRate,
+    madadPercent, isSingleResidence, legalFeesPercent, upgrades, furniture,
+    insurance, hoa,
+    currentRent, rentGrowth, rentalIncome, rentalIncomeAsPercent,
+    rentalIncomePercent, vacancyMonths,
+    taxRate, exemption,
+    rentalTaxEnabled, rentalTaxRate, rentalTaxExemption,
+    sp500TaxEnabled, sp500TaxRate, inflation, sp500Return,
+  } = inputs;
+
+  // Derived values
+  const madad = purchasePrice * madadPercent;
+  const purchaseTax = computePurchaseTax(purchasePrice, isSingleResidence);
+  const legalFees = purchasePrice * legalFeesPercent;
+  const oneTimeCosts = madad + purchaseTax + legalFees + upgrades + furniture;
+  const handoverMonth = constructionMonths;
+  const postHandoverMonths = holdingYears * 12;
+  const totalMonths = handoverMonth + postHandoverMonths;
+
+  const rMort = toMonthly(mortgageRate);
+  const rSp = toMonthlyCompound(sp500Return);
+  const termMonths = termYears * 12;
+  const shpitzerPMT = pmt(mortgageAmount, rMort, termMonths);
+  const rInflation = toMonthlyCompound(inflation);
+
+  // Pre-compute the one-time costs breakdown for the zero-construction case
+  const oneTimeCostsAtHandover = oneTimeCostsDue(
+    1, 0, purchaseTax, legalFees, upgrades, madad, furniture,
+  );
+
+  const monthlyRows: MonthlyRow[] = [];
+
+  // Mutable state across months
+  let equityRemaining = equity;
+  let drawnBalance = 0;
+  let contractorObligation = purchasePrice;
+  let portfolioB = 0;
+  let portfolioC = equity;
+  let contributionsB = 0;
+  let contributionsC = equity;
+  let contributionsBIndexed = 0;
+  let contributionsCIndexed = equity;
+  let remainingBalance = mortgageAmount;
+
+  // ===== CONSTRUCTION PHASE =====
+  for (let m = 1; m <= constructionMonths; m++) {
+    const result = constructionStep({
+      month: m,
+      constructionMonths,
+      purchasePrice,
+      signingPct,
+      constructionMode,
+      rMort,
+      termMonths,
+      mortgageAmount,
+      equityRemaining,
+      drawnBalance,
+      contractorObligation,
+      purchaseTax,
+      legalFees,
+      upgrades,
+      madad,
+      furniture,
+      marketPrice,
+      appreciation,
+      oneTimeCosts,
+      currentRent,
+      rentGrowth,
+      rSp,
+      rInflation,
       portfolioB,
       portfolioC,
       contributionsB,
       contributionsC,
       contributionsBIndexed,
       contributionsCIndexed,
-      sp500TaxB: sp500TaxBNow,
-      sp500TaxC: sp500TaxCNow,
-      netWorthA,
-      netWorthB,
-      netWorthC,
+      sp500TaxEnabled,
+      sp500TaxRate,
     });
+
+    monthlyRows.push(result.row);
+    equityRemaining = result.equityRemaining;
+    drawnBalance = result.drawnBalance;
+    contractorObligation = result.contractorObligation;
+    portfolioB = result.portfolioB;
+    portfolioC = result.portfolioC;
+    contributionsB = result.contributionsB;
+    contributionsC = result.contributionsC;
+    contributionsBIndexed = result.contributionsBIndexed;
+    contributionsCIndexed = result.contributionsCIndexed;
+  }
+
+  // ===== HANDOVER TOP-UP =====
+  if (drawnBalance < mortgageAmount) {
+    drawnBalance = mortgageAmount;
+  }
+  remainingBalance = drawnBalance;
+
+  // ===== POST-HANDOVER PHASE =====
+  for (let k = 1; k <= postHandoverMonths; k++) {
+    const m = handoverMonth + k;
+    const result = postHandoverStep({
+      month: m,
+      handoverMonth,
+      constructionMonths,
+      remainingBalance,
+      shpitzerPMT,
+      rMort,
+      marketPrice,
+      appreciation,
+      purchasePrice,
+      oneTimeCosts,
+      currentRent,
+      rentGrowth,
+      rentalIncome,
+      rentalIncomeAsPercent,
+      rentalIncomePercent,
+      vacancyMonths,
+      rentalTaxEnabled,
+      rentalTaxRate,
+      rentalTaxExemption,
+      taxRate,
+      exemption,
+      insurance,
+      hoa,
+      rSp,
+      rInflation,
+      portfolioB,
+      portfolioC,
+      contributionsB,
+      contributionsC,
+      contributionsBIndexed,
+      contributionsCIndexed,
+      sp500TaxEnabled,
+      sp500TaxRate,
+      oneTimeCostsDue: oneTimeCostsAtHandover,
+    });
+
+    monthlyRows.push(result.row);
+    remainingBalance = result.remainingBalance;
+    portfolioB = result.portfolioB;
+    portfolioC = result.portfolioC;
+    contributionsB = result.contributionsB;
+    contributionsC = result.contributionsC;
+    contributionsBIndexed = result.contributionsBIndexed;
+    contributionsCIndexed = result.contributionsCIndexed;
   }
 
   // ===== YEARLY ROLLUP =====
@@ -708,7 +1043,6 @@ export function runSimulation(inputs: SimulationInputs): SimulationResult {
   if (finalB > finalA && finalB >= finalC) winner = "B";
   else if (finalC > finalA && finalC > finalB) winner = "C";
 
-  // Breakeven: first month where C ≥ A.
   let breakevenMonthCvsA: number | null = null;
   for (const row of monthlyRows) {
     if (row.netWorthC >= row.netWorthA) {
@@ -798,17 +1132,6 @@ export function defaultRentalIncome(inputs: SimulationInputs): number {
   const r = inputs.mortgageRate / 12;
   const n = inputs.termYears * 12;
   return Math.round(pmt(inputs.mortgageAmount, r, n) * 0.8);
-}
-
-/** Sum of all one-time costs in ₪. Purchase tax uses bracket schedule. */
-export function computeOneTimeCosts(inputs: SimulationInputs): number {
-  const madad = inputs.purchasePrice * inputs.madadPercent;
-  const purchaseTax = computePurchaseTax(
-    inputs.purchasePrice,
-    inputs.isSingleResidence,
-  );
-  const legalFees = inputs.purchasePrice * inputs.legalFeesPercent;
-  return madad + purchaseTax + legalFees + inputs.upgrades + inputs.furniture;
 }
 
 /**

@@ -67,6 +67,7 @@ function RecommendationBox({
   onOpen: () => void;
 }) {
   const { project, best, score } = rec;
+  const info = rec.effectivePricePerSqm ?? project.pricePerSqm;
   return (
     <button
       type="button"
@@ -85,17 +86,13 @@ function RecommendationBox({
       <div className="space-y-1 text-xs">
         <Row
           label="חיסכון מול שוק חופשי"
-          value={
-            project.pricePerSqm
-              ? formatPercent(project.pricePerSqm.savingsPercent, 1)
-              : "—"
-          }
+          value={info ? formatPercent(info.savingsPercent, 1) : "—"}
         />
         <Row
           label="מחיר הגרלה ₪/מ״ר"
           value={
-            project.pricePerSqm
-              ? `${Math.round(project.pricePerSqm.lotteryPricePerSqm).toLocaleString("he-IL")} ₪`
+            info
+              ? `${Math.round(info.lotteryPricePerSqm).toLocaleString("he-IL")} ₪`
               : "—"
           }
         />

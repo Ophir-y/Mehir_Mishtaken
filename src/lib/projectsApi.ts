@@ -4,8 +4,8 @@ import type { Project, ProjectsResponse } from "@/lib/types";
 const seedProjects = (seedJson as { projects: Project[] }).projects;
 
 // Bump suffix whenever the project shape changes — old caches become invalid.
-// v4: per-m² model stabilized (one apartment per lottery, pricePerSqm info).
-const CACHE_KEY = "mehir-matara:projects-cache:v4";
+// v5: VAT (18%) is now added on top of the API's pre-VAT PricePerUnit.
+const CACHE_KEY = "mehir-matara:projects-cache:v5";
 /** Cached data older than this is dropped (so a one-year-old cache doesn't show). */
 const CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 

@@ -27,10 +27,10 @@ export function buildInputsForApartment(
 
   base.purchasePrice = apt.lotteryPrice;
   base.marketPrice = apt.marketPrice;
-  // The estimated rent serves double duty: scenario C pays this much in rent
-  // each month (proxy for "if you didn't buy, you'd be renting an equivalent
-  // apartment in this city"), and scenario B receives it as rental income.
-  base.currentRent = apt.estimatedRent;
+  // `rentalIncome` = what B collects from the tenant of the bought apartment.
+  // `currentRent` = what B (and C) pay at their OWN residence — distinct from
+  // the bought apartment's yield. The caller is expected to override
+  // `currentRent` from user prefs; the sandbox default below is only a fallback.
   base.rentalIncome = apt.estimatedRent;
   // Switch off the "rent as % of property value" mode so the apartment-
   // specific rent is used verbatim. Same for equity (we still want % mode for

@@ -3,7 +3,7 @@
     "source": "מקור: ממוצע שווי דירה יד-2/מדלן חלקי גודל ממוצע באותה עיר, יוני 2026. ערכים מעוגלים.",
     "comment": "מחיר ממוצע למ\"ר בשוק החופשי (יד שנייה). מחיר דירה חדשה ≈ ערך זה × 1.07.",
     "defaultPricePerSqm": 17000,
-    "newConstructionPremium": 0.07
+    "newConstructionPremium": 0.00
   },
   "pricesPerSqm": {
     "אופקים": 11000,
